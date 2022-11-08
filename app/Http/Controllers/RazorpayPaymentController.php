@@ -54,6 +54,7 @@ class RazorpayPaymentController extends Controller
                 'receipt' => $reciptId,
                 'amount' => $request->all()['amount'] * 100,
                 'currency' => 'INR',
+                'payment_capture' => 1  //<-------- for auto capture 
             ));
             $data = [
                 'orderId' => $order['id'],
