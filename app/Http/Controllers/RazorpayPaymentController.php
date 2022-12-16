@@ -26,8 +26,21 @@ class RazorpayPaymentController extends Controller
     private $razorpayId = "rzp_test_3MPOKRI8WOd54p";
     private $razorpayKey = "k23OSfMevkBszuPY5ZtZwutU";
     private $razerWebhookSecret = "something";
+    private $bearerToken = "EAAIZBvM1yOr0BAJTZBM1ZBcqmp8OO3ZB9BJdtfSPMQou2t3Gke3pcCqrMO7rR9MNqfN5OR2h6IJK8AcaDZCVWKjHcFJvbj6mnRdyiWoV3dO6rn9SACSiJe1rvKY63ZAx2RQEXTR2HpUht6r3ZCz60nWtqvi7Ia6C71BNRNmedNRoaV2zry3iDgYYHEE1fSaNcZAnrJkj1RVq4gZDZD";
 
-    //payment gebnerating order id
+    /**
+     * | code : Sam Kerketta
+     * | ----------------- payment generating order id ------------------------------- |
+     * | @var validated 
+     * | @var reciptId
+     * | @var api
+     * | @var order
+     * | @var data
+     * | @var tran
+     * | @var error
+     * | @param request
+     * | Operation : generating the order id according the request data using the razorpay API 
+     */
     public function store(Request $request)
     {
         #code....
@@ -35,6 +48,8 @@ class RazorpayPaymentController extends Controller
             $request->all(),
             [
                 'amount' => 'required|max:200',
+                'apppartmentId' => 'unique:payment_requests, apppartment_id',
+                'consumerId' => 'unique:payment_requests, consumer_id'
             ]
         );
         if ($validated->fails()) {
@@ -45,7 +60,7 @@ class RazorpayPaymentController extends Controller
             ], 401);
         }
 
-        DB::beginTransaction();
+        DB::beginTransaction(); //<----------- here(CAUTION)
         try {
             $reciptId = Str::random(10);
             $api = new Api($this->razorpayId, $this->razorpayKey);
@@ -56,7 +71,7 @@ class RazorpayPaymentController extends Controller
                 'currency' => 'INR',
                 'payment_capture' => 1  //<-------- for auto capture 
             ));
-            $data = [
+            $returndata = [
                 'orderId' => $order['id'],
                 'amount' => $request->all()['amount'],
                 'currency' => 'INR',
@@ -67,35 +82,49 @@ class RazorpayPaymentController extends Controller
             // if(PaymentRequests::where('apppartment_id', $request->apppartmentId)->exists() || PaymentRequests::where('consumer_id',$request->consumerId)->exists())
 
             //storing the detail in the database
-            $tran = new PaymentRequests();
-            $tran->apppartment_id = $request->apppartmentId;
-            $tran->consumer_id = $request->consumerId;
-            $tran->razorpay_order_id = $data['orderId'];
-            $tran->amount = $request->amount;
-            $tran->currency = 'INR';
-            $tran->save();
+            $transaction = new PaymentRequests();
+            $transaction->apppartment_id = $request->apppartmentId;
+            $transaction->consumer_id = $request->consumerId;
+            $transaction->razorpay_order_id = $returndata['orderId'];
+            $transaction->amount = $request->amount;
+            $transaction->currency = 'INR';
+            $transaction->save();
 
-            DB::commit();
+            DB::commit(); //<----------- here(CAUTION)
 
             return response()->json([
                 "status" => true, "message" => "Order Id Generated",
-                "data" => $data
+                "data" => $returndata
             ]);
         } catch (Exception $error) {
             return response()->json([$error]);
         }
     }
 
-    //verification of the signature
+    /**
+     * | ----------------- verification of the signature ------------------------------- |
+     * | @var validated 
+     * | @var reciptId
+     * | @var api
+     * | @var success
+     * | @var data
+     * | @var error
+     * | @var e
+     * | @param request
+     * | @param attributes
+     * | Operation : generating the order id according the request data using the razorpay API 
+     * | this -> naming
+     * | here -> variable
+     */
     function verify(Request $request, $attributes)
     {
         // validation 
         $validated = Validator::make(
             $request->all(),
             [
-                'razorpay_order_id' => 'required',
-                'razorpay_payment_id' => 'required',
-                'razorpay_signature' => 'required'
+                'razorpayOrderId' => 'required',
+                'razorpayPaymentId' => 'required',
+                'razorpaySignature' => 'required'
             ]
         );
         if ($validated->fails()) {
@@ -105,73 +134,101 @@ class RazorpayPaymentController extends Controller
                 'errors' => $validated->errors()
             ], 401);
         }
-
-        // operation
-        $success = false;
-        $error = "Payment Failed!";
-        // verify the existence of the razerpay Id
-        if (!empty($request->razorpayPaymentId)) {
-            $api = new Api($this->razorpayId, $this->razorpayKey);
-            try {
-                $attributes = [
-                    'razorpay_order_id' => $request->razorpayOrderId,
-                    'razorpay_payment_id' => $request->razorpayPaymentId,
-                    'razorpay_signature' => $request->razorpaySignature
-                ];
-                $api->utility->verifyPaymentSignature($attributes);
-                $success = true;
-            } catch (SignatureVerificationError $e) {
-                $success = false;
-                $error = 'Razorpay Error : ' . $e->getMessage();
+        try {
+            $success = false;
+            $error = "Payment Failed!";
+            # verify the existence of the razerpay Id
+            if (!empty($request->razorpayPaymentId)) {
+                $api = new Api($this->razorpayId, $this->razorpayKey);
+                try {
+                    $attributes = [
+                        'razorpay_order_id' => $request->razorpayOrderId,
+                        'razorpay_payment_id' => $request->razorpayPaymentId,
+                        'razorpay_signature' => $request->razorpaySignature
+                    ];
+                    $api->utility->verifyPaymentSignature($attributes);
+                    $success = true;
+                } catch (SignatureVerificationError $exception) {
+                    $success = false;
+                    $error = 'Razorpay Error : ' . $exception->getMessage();
+                }
             }
-        }
-        // validation complete and the storing of data
-        if ($success === true) {
-            // Update database with success data
-            try {
+            # validation complete and the storing of data
+            if ($success === true) {
+                # Update database with success data
+                try {
+                    $data = new PaymentSuccess();
+                    $data->razerpay_order_id = $request->razorpayOrderId;
+                    $data->razerpay_payment_id = $request->razorpayPaymentId;
+                    $data->razerpay_signature = $request->razorpaySignature;
+                    $data->save();
 
-                $data = new PaymentSuccess();
-                $data->razerpay_order_id = $request->razorpayOrderId;
-                $data->razerpay_payment_id = $request->razorpayPaymentId;
-                $data->razerpay_signature = $request->razorpaySignature;
-                $data->save();
-                // Redirect to success page
-                return response()->json(["message" => "Payment Success!"]);
-            } catch (Exception $e) {
-                return response($e);
+                    return response()->json(["status" => true, "message" => "Payment Success!"]);
+                } catch (Exception $e) {
+                    return response($e);
+                }
             }
+            # Update database with error data
+            $data = new PaymentReject();
+            $data->razerpay_order_id = $request->razorpayOrderId;
+            $data->razerpay_payment_id = $request->razorpayPaymentId;
+            $data->razerpay_signature = $request->razorpaySignature;
+            $data->save();
+            return response()->json([$error]);
+        } catch (Exception $e) {
+            return $e;
         }
-        // Update database with error data
-        $data = new PaymentReject();
-        $data->razerpay_order_id = $request->razorpayOrderId;
-        $data->razerpay_payment_id = $request->razorpayPaymentId;
-        $data->razerpay_signature = $request->razorpaySignature;
-        $data->save();
-        return response()->json([$error]);
     }
 
     // the integration of the webhook
+    /**
+     * | ----------------- verification of the signature ------------------------------- |
+     * | @var dataOfRequest 
+     * | @var accountId
+     * | @var aCard
+     * | @var card
+     * | @var something
+     * | @var notes
+     * | @var arrayInAquirer
+     * | @var firstKey
+     * | @var save
+     * | @var obj
+     * | @var amount
+     * | @var emai
+     * | @var phone
+     * | @var url
+     * | @var token
+     * | @param request
+     * | Operation : this function url is hited by the webhook and the detail of the payment is collected in request 
+     *               thie the storage -> generating pdf -> generating json ->save -> hitting url for watsapp message.
+     * | this -> naming
+     * | here -> variable
+     */
     public function webhook(Request $request)
     {
-        $success = false;
         #   verification of the webhook
-        // try {
-        //     $api = new Api($this->razorpayId, $this->razorpayKey);
-        //     $webhookBody = $request->all()['data'];
-        //     // $data = array_merge($request->all(), ['index' => 'value']);
-        //     $webhookSignature = $request->webhookSignature;
-        //     $webhookSecret = $this->razerWebhookSecret;
-        //     $api->utility->verifyWebhookSignature($webhookBody, $webhookSignature, $webhookSecret);
-        //     $success = true;
-        // }
-        // #   error 
-        // catch (SignatureVerificationError $e) {
-        //     $success = false;
-        //     $error = 'Razorpay Error : ' . $e->getMessage();
-        //     return response()->json([$error]);
-        // }
+        /** 
+         *|   $success = false;
+         *|    try {
+         *|        $api = new Api($this->razorpayId, $this->razorpayKey);
+         *|        $webhookBody = $request->all()['data'];
+         *|        // $data = array_merge($request->all(), ['index' => 'value']);
+         *|        $webhookSignature = $request->webhookSignature;
+         *|        $webhookSecret = $this->razerWebhookSecret;
+         *|        $api->utility->verifyWebhookSignature($webhookBody, $webhookSignature, $webhookSecret);
+         *|        $success = true;
+         *|    }
+         *|    #   error 
+         *|    catch (SignatureVerificationError $e) {
+         *|        $success = false;
+         *|        $error = 'Razorpay Error : ' . $e->getMessage();
+         *|        return response()->json([$error]);
+         *|    }
+         */
 
         #   Data from webhook to json file 
+        DB::beginTransaction(); //<------------ (CAUTION) check the ending of it
+
         $dataOfRequest = $request->all();
         $accountId = $request->payload['payment']['entity']['id'];
         Storage::disk('public')->put($accountId . '.json', json_encode($dataOfRequest));
@@ -243,48 +300,51 @@ class RazorpayPaymentController extends Controller
         $save = $data->save();
         if ($save) {
             #   object calling 
-            $obj = new NewPdfController();
+            $obj = new NewPdfController(); //<---------- traits
             $amount = $request->payload['payment']['entity']['amount'];
             $emai = $request->payload['payment']['entity']['email'];
             $phone = $request->payload['payment']['entity']['contact'];
             $url = $obj->pdfview($amount, $emai, $phone);
-            //  $url =stripcslashes($url);              //<-------------------------- here
 
             # calling an api for the message in watsapp
-            $token = Http::withHeaders([
+            try {
+                $token = Http::withHeaders([
 
-                "Authorization" => "Bearer EAAIZBvM1yOr0BAJdUaSCxm3msSpOIeJaTHYEcIX541VTataq81i3Ja9TwZBGgZCfkyZA6RsO3O0Aoz5yZBEUxdFfDgI93xZAZAkZCYGoLjUzLvdvTRc2xyLtnBzszbTdK9e6XZCMpGiR2y3ZBYjNq3BFVCSflozWaAJfHYPAHnozUEDYJTr2MhQmjvZCU3jQ6ZBX9Lpw69M1ZCH5oHOeRfINr08Xm3uTw9bL4QngZD",
-                "contentType" => "application/json"
+                    "Authorization" => "Bearer $this->bearerToken",
+                    "contentType" => "application/json"
 
-            ])->post('https://graph.facebook.com/v15.0/103215889230412/messages', [
-                "messaging_product" => "whatsapp",
-                "recipient_type" => "individual",
-                "to" => $phone, //<--------------------- here
-                "type" => "template",
-                "template" => [
-                    "name" => "file_test",
-                    "language" => [
-                        "code" => "en_US"
-                    ],
-                    "components" => [
-                        [
-                            "type" => "header",
-                            "parameters" => [
-                                [
-                                    "type" => "document",
-                                    "document" => [
-                                        "link" => $url, //<--------------------- here
-                                        "filename" => "Payment Receipt.pdf"
+                ])->post('https://graph.facebook.com/v15.0/103215889230412/messages', [
+                    "messaging_product" => "whatsapp",
+                    "recipient_type" => "individual",
+                    "to" => $phone, //<--------------------- here
+                    "type" => "template",
+                    "template" => [
+                        "name" => "file_test",
+                        "language" => [
+                            "code" => "en_US"
+                        ],
+                        "components" => [
+                            [
+                                "type" => "header",
+                                "parameters" => [
+                                    [
+                                        "type" => "document",
+                                        "document" => [
+                                            "link" => $url, //<--------------------- here
+                                            "filename" => "Payment Receipt.pdf"
+                                        ]
                                     ]
                                 ]
-                            ]
-                        ],
+                            ],
+                        ]
                     ]
-                ]
-            ]);
+                ]);
 
-            if ($token) {   // <------------------- may use catch
-                return response()->json(["message" => "message send!", "data" => $token]);
+                if ($token) {   // <------------------- may use catch
+                    return response()->json(["message" => "message send!", "data" => $token]);
+                }
+            } catch (Exception $e) {
+                return $e;
             }
             return response()->json(["message errer !"]);
         }
@@ -305,6 +365,6 @@ class RazorpayPaymentController extends Controller
                 'payment_email'
             ))->get();
 
-        return response()->json(["status"=>true,"message"=>"Data of all the payment","data" => $dataOfPaymentExceptCard]);
+        return response()->json(["status" => true, "message" => "Data of all the payment", "data" => $dataOfPaymentExceptCard]);
     }
 }

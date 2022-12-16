@@ -28,7 +28,7 @@ class NewPdfController extends Controller
         $filename = time() . '.' . 'pdf';
         $file = $pdf->download($filename . '.' . 'pdf');
         $pdf = Storage::put('public' . '/' . $filename, $file);
-        $url = asset("/storage/$filename");
+        $url = ("http://203.129.217.245/storage/$filename");
         return $url;
     }
 }
